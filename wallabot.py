@@ -1,5 +1,6 @@
 import os
 import time
+from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackContext
 from selenium import webdriver
@@ -8,11 +9,12 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import NoSuchElementException
 
+load_dotenv()
 
 HISTORY_FILE = "products_history.txt"
-TELEGRAM_TOKEN = "TELEGRAM_TOKEN"
-CHROMEDRIVER_PATH = r"C:\chromedriver\chromedriver.exe"
-WALLAPOP_URL = "https://es.wallapop.com/app/search"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH")
+WALLAPOP_URL = os.getenv("WALLAPOP_URL")
 
 
 def load_history():
