@@ -42,20 +42,20 @@ def get_listings(url):
     time.sleep(10)
 
     all_products = driver.find_elements(
-        By.CLASS_NAME, "ItemCardList__item")
+        By.CLASS_NAME, "item-card_ItemCard--vertical__CNrfk")
     product_list = []
 
     for product in all_products:
         try:
             try:
                 title = product.find_element(
-                    By.CLASS_NAME, "ItemCard__title").text
+                    By.CLASS_NAME, "item-card_ItemCard__title__5TocV").text
             except NoSuchElementException:
                 title = None
 
             try:
                 price = product.find_element(
-                    By.CLASS_NAME, "ItemCard__price").text
+                    By.CLASS_NAME, "item-card_ItemCard__price__pVpdc").text
             except NoSuchElementException:
                 price = None
 
