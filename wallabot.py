@@ -34,12 +34,9 @@ def save_history(history):
 def get_listings(url):
     options = Options()
     options.add_argument("--headless")
-    options.add_argument("disable-gpu")
+    options.add_argument("--disable-gpu")
 
-from webdriver_manager.chrome import ChromeDriverManager
-
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     driver.get(url)
     time.sleep(10)
 
