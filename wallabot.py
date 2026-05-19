@@ -36,8 +36,10 @@ def get_listings(url):
     options.add_argument("--headless")
     options.add_argument("disable-gpu")
 
-    driver = webdriver.Chrome(service=Service(
-        CHROMEDRIVER_PATH), options=options)
+from webdriver_manager.chrome import ChromeDriverManager
+
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
     driver.get(url)
     time.sleep(10)
 
