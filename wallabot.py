@@ -11,6 +11,21 @@ from selenium.common.exceptions import NoSuchElementException
 
 load_dotenv()
 
+import http.server
+import socketserver
+import threading
+
+# Cria um servidor web falso numa porta qualquer para a Render ficar feliz
+def run_fake_server():
+    PORT = int(os.getenv("PORT", 8080))
+    Handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+        httpd.serve_forever()
+
+# Inicia o servidor web falso numa linha paralela (thread)
+threading.Thread(target=run_fake_server, daemon=True).start()
+
+
 HISTORY_FILE = "products_history.txt"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH")
