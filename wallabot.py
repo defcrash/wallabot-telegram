@@ -105,12 +105,23 @@ async def check_new_products(context: CallbackContext):
     job_data = context.job.data
     chat_id = job_data['chat_id']
     history = load_history()
-    listings = get_listings(WALLAPOP_URL)
-
-    for product in listings:
-        if product['url'] not in history:
-            await send_new_product_message(context, chat_id, product)
-            history.add(product['url'])
+    
+    # Divide a variável WALLAPOP_URL por vírgulas, limpando espaços
+    urls = [url.strip() for url in WALLAPOP_URL.split(",")]
+    
+    # Corre o monitor para cada um dos links configurados
+    for url in urls:
+        if not url:
+            continue
+        try:
+            listings = get_listings(url)
+            for product in listings:
+                if product['url'] not in history:
+                    await send_new_product_message(context, chat_id, product)
+                    history.add(product['url'])
+            time.sleep(2) # Pequena pausa entre links para evitar bloqueios
+        except Exception as e:
+            print(f"Erro ao processar o link {url}: {e}")
 
     save_history(history)
 
