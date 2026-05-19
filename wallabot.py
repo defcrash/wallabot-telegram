@@ -136,7 +136,7 @@ async def start(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
     await send_started_message(context, chat_id)
     context.job_queue.run_repeating(
-        check_new_products, interval=60, first=0, data={'chat_id': chat_id})
+        check_new_products, interval=120, first=0, data={'chat_id': chat_id})
 
 
 async def stop(update: Update, context: CallbackContext):
