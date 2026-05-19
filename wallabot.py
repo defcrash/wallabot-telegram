@@ -51,10 +51,13 @@ def get_listings(url):
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver = webdriver.Chrome(options=options)
     driver.get(url)
     time.sleep(10)
+
 
     all_products = driver.find_elements(
         By.CLASS_NAME, "item-card_ItemCard--vertical__CNrfk")
