@@ -4,7 +4,6 @@ import http.server
 import socketserver
 import threading
 import requests
-from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackContext
@@ -37,23 +36,31 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Conversor de Link Web para Chamada de API Nativa Otimizado ---
+# --- Conversor Inteligente e Blindado ---
 def convert_url_to_api(web_url):
     try:
-        parsed_url = urlparse(web_url)
-        params = parse_qs(parsed_url.query)
+        # Se já for um link da API ou contiver os parâmetros limpos
+        if "://wallapop.com" in web_url:
+            return web_url
+            
+        # Abordagem direta por extração de texto (limpa colchetes, plicas e espaços)
+        keywords = ""
+        max_price = ""
+        category_id = ""
         
-        # Extrai os filtros limpando os caracteres de listas do Python
-        keywords = params.get('keywords', [''])[0]
-        max_price = params.get('max_sale_price', [''])[0]
-        category_id = params.get('category_id', [''])[0] # Corrigido de category_ids para category_id
-        
-        # Substitui espaços vazios por %20 para links válidos
-        keywords = keywords.replace(" ", "%20")
-        
-        # Monta o pedido com os valores limpos em formato string puro
-        api_url = f"https://wallapop.com{keywords}&filters_source=search_box"
-        
+        if "keywords=" in web_url:
+            keywords = web_url.split("keywords=")[1].split("&")[0]
+        if "max_sale_price=" in web_url:
+            max_price = web_url.split("max_sale_price=")[1].split("&")[0]
+        if "category_id=" in web_url:
+            category_id = web_url.split("category_id=")[1].split("&")[0]
+            
+        # Se for um link antigo da Wallapop com 'category_ids'
+        if "category_ids=" in web_url:
+            category_id = web_url.split("category_ids=")[1].split("&")[0]
+
+        # Monta a URL da API nativa com texto 100% limpo
+        api_url = f"https://://wallapop.com/api/v3/general/search?keywords={keywords}&filters_source=search_box"
         if max_price:
             api_url += f"&max_sale_price={max_price}"
         if category_id:
@@ -62,7 +69,7 @@ def convert_url_to_api(web_url):
         api_url += "&order_by=newest"
         return api_url
     except Exception as e:
-        print(f"[ERRO INTERNO CONVERSOR] {e}")
+        print(f"[ERRO CONVERSOR] {e}")
         return None
 
 # --- Extrator Ultra-Estável via API Interna ---
@@ -71,11 +78,10 @@ def get_listings(web_url):
     api_url = convert_url_to_api(web_url)
     
     if not api_url:
-        print("[ERRO URL] Não foi possível converter o link.")
         return product_list
         
     headers = {
-        "User-Agent": "Wallapop/3.166.0 (iPhone; iOS 16.0; Scale/3.00)",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
         "Accept": "application/json",
         "DeviceOS": "iOS"
     }
@@ -83,18 +89,23 @@ def get_listings(web_url):
     try:
         response = requests.get(api_url, headers=headers, timeout=15)
         if response.status_code != 200:
-            print(f"[API ERRO] Código de resposta: {response.status_code}")
+            print(f"[API ERRO] Código {response.status_code} para o link convertido.")
             return product_list
 
         data = response.json()
-        # Aceder diretamente à lista de objetos enviados pelo servidor
         items = data.get('search_objects', [])
-        print(f"[SUCESSO API] Itens localizados no servidor Wallapop: {len(items)}")
+        print(f"[SUCESSO API] Itens localizados no servidor: {len(items)}")
 
         for item in items:
             try:
                 title = item.get('title', 'Nintendo Switch')
-                price_val = item.get('price', {}).get('amount') or item.get('price', 0)
+                
+                # Extração do preço
+                price_data = item.get('price', {})
+                if isinstance(price_data, dict):
+                    price_val = price_data.get('amount') or price_data.get('cash') or 0
+                else:
+                    price_val = price_data or 0
                 price = f"{price_val}€"
                 
                 web_slug = item.get('web_slug')
@@ -110,7 +121,7 @@ def get_listings(web_url):
                 continue
 
     except Exception as e:
-        print(f"[FALHA RECONEXÃO] Erro ao contactar a API: {e}")
+        print(f"[FALHA RECONEXÃO] Erro geral: {e}")
         
     return product_list
 
@@ -120,7 +131,7 @@ async def send_new_product_message(context: CallbackContext, chat_id, product):
     await context.bot.send_message(chat_id, message, parse_mode="Markdown")
 
 async def send_started_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "✅ Sistema de Monitorização por API ativo a cada 3 minutos!")
+    await context.bot.send_message(chat_id, "✅ Sistema Ativo! Monitorização direta da API a cada 3 minutos.")
 
 async def send_stopped_message(context: CallbackContext, chat_id):
     await context.bot.send_message(chat_id, "🛑 Pesquisa parada.")
