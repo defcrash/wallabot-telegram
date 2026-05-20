@@ -37,28 +37,32 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Conversor de Link Web para Chamada de API Nativa ---
+# --- Conversor de Link Web para Chamada de API Nativa Otimizado ---
 def convert_url_to_api(web_url):
     try:
         parsed_url = urlparse(web_url)
         params = parse_qs(parsed_url.query)
         
-        # Extrai os filtros que configurou no site
+        # Extrai os filtros limpando os caracteres de listas do Python
         keywords = params.get('keywords', [''])[0]
         max_price = params.get('max_sale_price', [''])[0]
-        category_id = params.get('category_ids', [''])[0]
+        category_id = params.get('category_id', [''])[0] # Corrigido de category_ids para category_id
         
-        # Monta o pedido direto para o servidor interno de dados da Wallapop
+        # Substitui espaços vazios por %20 para links válidos
+        keywords = keywords.replace(" ", "%20")
+        
+        # Monta o pedido com os valores limpos em formato string puro
         api_url = f"https://wallapop.com{keywords}&filters_source=search_box"
+        
         if max_price:
             api_url += f"&max_sale_price={max_price}"
         if category_id:
             api_url += f"&category_ids={category_id}"
             
-        # Força a ordenação pelos anúncios mais recentes
         api_url += "&order_by=newest"
         return api_url
-    except Exception:
+    except Exception as e:
+        print(f"[ERRO INTERNO CONVERSOR] {e}")
         return None
 
 # --- Extrator Ultra-Estável via API Interna ---
