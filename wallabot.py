@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import http.server
 import socketserver
 import threading
@@ -10,7 +11,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.common.exceptions import NoSuchElementException
 
 load_dotenv()
 
@@ -40,7 +40,7 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Extrator Avançado com Seletores Nativos Robustos ---
+# --- Extrator Científico via JSON Oculto (Infalível) ---
 def get_listings(url):
     options = Options()
     options.add_argument("--headless")
@@ -51,55 +51,56 @@ def get_listings(url):
 
     service = Service(executable_path="/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
-    driver.get(url)
-    time.sleep(12)  # Tempo para garantir o carregamento do conteúdo dinâmico
-
-    # Captura os cartões de produtos usando seletores de caminhos absolutos (resistentes a mudanças de classes)
-    all_products = driver.find_elements(By.XPATH, "//a[contains(@href, '/item/')]")
+    
+    driver.set_page_load_timeout(30)
     product_list = []
-
-    for product in all_products:
+    
+    try:
+        driver.get(url)
+        time.sleep(6)  # Tempo suficiente para injetar o script oculto
+        
+        # O TRUQUE MAGNÍFICO: Extrai o JSON de dados puro que a Wallapop usa internamente
+        json_element = driver.find_element(By.ID, "__NEXT_DATA__")
+        json_text = json_element.get_attribute("innerHTML")
+        data = json.loads(json_text)
+        
+        # Navega de forma segura pela árvore de dados do Next.js da Wallapop
         try:
-            url_prod = product.get_attribute("href")
-            if not url_prod or "/item/" not in url_prod:
+            items = data['props']['pageProps']['initKeywordsData']['items']
+        except KeyError:
+            try:
+                # Caminho alternativo caso seja uma pesquisa direta de catálogo estruturado
+                items = data['props']['pageProps']['searchResult']['items']
+            except KeyError:
+                items = []
+
+        for item in items:
+            try:
+                # Extração direta dos campos nativos do servidor da Wallapop (Impossível vir em branco)
+                title = item.get('title', 'Nintendo Switch (Ver Link)')
+                
+                # Trata o preço adicionando o símbolo do euro de forma limpa
+                price_val = item.get('price', {}).get('amount') or item.get('price') or "Consultar"
+                price = f"{price_val}€" if isinstance(price_val, (int, float)) else f"{price_val}"
+                
+                # Garante que o link do produto fica no formato correto
+                web_slug = item.get('webSlug')
+                if web_slug:
+                    url_prod = f"https://wallapop.com{web_slug}"
+                else:
+                    continue
+
+                product_info = {"title": title, "price": price, "url": url_prod}
+                product_list.append(product_info)
+                
+            except Exception:
                 continue
 
-            # Corta os parâmetros de tracking do link para manter o histórico limpo
-            url_prod = url_prod.split("?")[0]
-
-            # Tenta extrair o título diretamente do atributo HTML 'title' do link (MÉTODO MAIS ESTÁVEL)
-            title = product.get_attribute("title")
-            
-            # Se falhar, tenta ler a caixa de texto interna por posição relativa
-            if not title:
-                try:
-                    title = product.find_element(By.XPATH, ".//p[contains(@class, 'title')]").text
-                except NoSuchElementException:
-                    try:
-                        title = product.find_element(By.XPATH, ".//div[contains(@class, 'ItemCard__info')]").text
-                    except NoSuchElementException:
-                        title = "Nintendo Switch (Consulte o Link)"
-
-            # Extração de Preço por deteção do símbolo monetário "€" no texto do cartão
-            try:
-                price = product.find_element(By.XPATH, ".//*[contains(text(), '€')]").text
-            except NoSuchElementException:
-                try:
-                    price = product.find_element(By.XPATH, ".//span[contains(@class, 'price')]").text
-                except NoSuchElementException:
-                    price = "Ver na Aplicação"
-
-            product_info = {"title": title, "price": price, "url": url_prod}
-            
-            # Evita duplicados na mesma leitura
-            if product_info not in product_list:
-                product_list.append(product_info)
-
-        except Exception as e:
-            print(f"Erro ao processar item individual: {e}")
-            continue
-
-    driver.quit()
+    except Exception as e:
+        print(f"Erro ao processar estrutura JSON: {e}")
+    finally:
+        driver.quit()
+        
     return product_list
 
 # --- Mensagens do Telegram ---
@@ -108,7 +109,7 @@ async def send_new_product_message(context: CallbackContext, chat_id, product):
     await context.bot.send_message(chat_id, message, parse_mode="Markdown")
 
 async def send_started_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "✅ A pesquisa na Wallapop foi INICIADA! A monitorizar as suas 2 URLs a cada 3 minutos.")
+    await context.bot.send_message(chat_id, "✅ A pesquisa na Wallapop foi REINICIADA! Monitorização de dados brutos ativa a cada 3 minutos.")
 
 async def send_stopped_message(context: CallbackContext, chat_id):
     await context.bot.send_message(chat_id, "🛑 A pesquisa foi PARADA. Use /start para retomar.")
@@ -130,9 +131,9 @@ async def check_new_products(context: CallbackContext):
                 if product['url'] not in history:
                     await send_new_product_message(context, chat_id, product)
                     history.add(product['url'])
-            time.sleep(4)
+            time.sleep(3)
         except Exception as e:
-            print(f"Erro ao processar o link: {e}")
+            print(f"Erro na fila de processamento: {e}")
 
     save_history(history)
 
@@ -140,18 +141,14 @@ async def check_new_products(context: CallbackContext):
 async def start(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
     await send_started_message(context, chat_id)
-    # Fixado em 180 segundos (3 minutos) para dar estabilidade e evitar colisões
     context.job_queue.run_repeating(
         check_new_products, interval=180, first=0, data={'chat_id': chat_id})
 
 async def stop(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
-    # CORREÇÃO DEFINITIVA: Interrompe todos os agendamentos ativos na fila de tarefas
     current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
     for job in current_jobs:
         job.schedule_removal()
-    
-    # Para a fila global
     await context.job_queue.stop()
     await send_stopped_message(context, chat_id)
 
