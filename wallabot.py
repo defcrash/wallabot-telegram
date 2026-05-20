@@ -40,7 +40,7 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Extrator Avançado com Seletores Nativos Robustos ---
+# --- Extrator Otimizado com Limites de Tempo Alargados ---
 def get_listings(url):
     options = Options()
     options.add_argument("--headless")
@@ -51,10 +51,18 @@ def get_listings(url):
 
     service = Service(executable_path="/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
-    driver.get(url)
-    time.sleep(12)  # Tempo para garantir o carregamento do conteúdo dinâmico
+    
+    # Define limites de tempo para o Chrome não ficar "preso" para sempre se a rede falhar
+    driver.set_page_load_timeout(30)
+    driver.implicitly_wait(5)
+    
+    try:
+        driver.get(url)
+        time.sleep(8)  # Tempo equilibrado para carregar o conteúdo na Render
+    except Exception as page_error:
+        print(f"Aviso no carregamento da página: {page_error}")
 
-    # Captura os cartões de produtos usando seletores de caminhos absolutos (resistentes a mudanças de classes)
+    # Captura os links dos produtos usando um padrão XPATH universal
     all_products = driver.find_elements(By.XPATH, "//a[contains(@href, '/item/')]")
     product_list = []
 
@@ -64,13 +72,12 @@ def get_listings(url):
             if not url_prod or "/item/" not in url_prod:
                 continue
 
-            # Corta os parâmetros de tracking do link para manter o histórico limpo
-            url_prod = url_prod.split("?")[0]
+            # CORREÇÃO CRÍTICA: Mantém o link como string limpa, removendo parâmetros de tracking
+            if "?" in url_prod:
+                url_prod = url_prod.split("?")[0]
 
-            # Tenta extrair o título diretamente do atributo HTML 'title' do link (MÉTODO MAIS ESTÁVEL)
+            # Extração do Título
             title = product.get_attribute("title")
-            
-            # Se falhar, tenta ler a caixa de texto interna por posição relativa
             if not title:
                 try:
                     title = product.find_element(By.XPATH, ".//p[contains(@class, 'title')]").text
@@ -80,23 +87,19 @@ def get_listings(url):
                     except NoSuchElementException:
                         title = "Nintendo Switch (Consulte o Link)"
 
-            # Extração de Preço por deteção do símbolo monetário "€" no texto do cartão
+            # Extração do Preço (Procura o símbolo do Euro €)
             try:
                 price = product.find_element(By.XPATH, ".//*[contains(text(), '€')]").text
             except NoSuchElementException:
-                try:
-                    price = product.find_element(By.XPATH, ".//span[contains(@class, 'price')]").text
-                except NoSuchElementException:
-                    price = "Ver na Aplicação"
+                price = "Ver Preço na Aplicação"
 
             product_info = {"title": title, "price": price, "url": url_prod}
             
-            # Evita duplicados na mesma leitura
+            # Evita duplicados na lista temporária
             if product_info not in product_list:
                 product_list.append(product_info)
 
         except Exception as e:
-            print(f"Erro ao processar item individual: {e}")
             continue
 
     driver.quit()
@@ -108,7 +111,7 @@ async def send_new_product_message(context: CallbackContext, chat_id, product):
     await context.bot.send_message(chat_id, message, parse_mode="Markdown")
 
 async def send_started_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "✅ A pesquisa na Wallapop foi INICIADA! A monitorizar as suas 2 URLs a cada 3 minutos.")
+    await context.bot.send_message(chat_id, "✅ A pesquisa na Wallapop foi INICIADA com sucesso! A monitorizar os seus múltiplos links a cada 3 minutos.")
 
 async def send_stopped_message(context: CallbackContext, chat_id):
     await context.bot.send_message(chat_id, "🛑 A pesquisa foi PARADA. Use /start para retomar.")
@@ -130,7 +133,7 @@ async def check_new_products(context: CallbackContext):
                 if product['url'] not in history:
                     await send_new_product_message(context, chat_id, product)
                     history.add(product['url'])
-            time.sleep(4)
+            time.sleep(3)
         except Exception as e:
             print(f"Erro ao processar o link: {e}")
 
@@ -140,18 +143,14 @@ async def check_new_products(context: CallbackContext):
 async def start(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
     await send_started_message(context, chat_id)
-    # Fixado em 180 segundos (3 minutos) para dar estabilidade e evitar colisões
     context.job_queue.run_repeating(
         check_new_products, interval=180, first=0, data={'chat_id': chat_id})
 
 async def stop(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
-    # CORREÇÃO DEFINITIVA: Interrompe todos os agendamentos ativos na fila de tarefas
     current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
     for job in current_jobs:
         job.schedule_removal()
-    
-    # Para a fila global
     await context.job_queue.stop()
     await send_stopped_message(context, chat_id)
 
