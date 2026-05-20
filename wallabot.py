@@ -87,11 +87,45 @@ def get_listings(url):
                     except NoSuchElementException:
                         title = "Nintendo Switch (Consulte o Link)"
 
-            # Extração do Preço (Procura o símbolo do Euro €)
-            try:
-                price = product.find_element(By.XPATH, ".//*[contains(text(), '€')]").text
-            except NoSuchElementException:
-                price = "Ver Preço na Aplicação"
+            # --- NOVA EXTRAÇÃO DE PREÇO BLINDADA ---
+            price = None
+            
+            # Tentativa 1: Procura qualquer etiqueta filha que tenha o símbolo € no texto
+            if not price:
+                try:
+                    price = product.find_element(By.XPATH, ".//*[contains(text(), '€')]").text
+                except NoSuchElementException:
+                    pass
+
+            # Tentativa 2: Procura por tags estruturais de preço comuns na Wallapop
+            if not price:
+                try:
+                    price = product.find_element(By.XPATH, ".//span[contains(@class, 'price')]").text
+                except NoSuchElementException:
+                    pass
+
+            # Tentativa 3: Se o texto falhar, tenta extrair o atributo de acessibilidade "aria-label" (Muito comum)
+            if not price:
+                try:
+                    aria_label = product.get_attribute("aria-label")
+                    if aria_label and "€" in aria_label:
+                        price = aria_label
+                except Exception:
+                    pass
+
+            # Tentativa 4: Procura na descrição alt da imagem interna do produto
+            if not price:
+                try:
+                    img_alt = product.find_element(By.TAG_NAME, "img").get_attribute("alt")
+                    if img_alt and "€" in img_alt:
+                        # Extrai a parte do preço se estiver no texto da imagem
+                        price = img_alt.split(" por ")[-1] if " por " in img_alt else img_alt
+                except Exception:
+                    pass
+
+            # Salvaguarda final se tudo falhar
+            if not price or price.strip() == "":
+                price = "Ver Preço no Link"
 
             product_info = {"title": title, "price": price, "url": url_prod}
             
