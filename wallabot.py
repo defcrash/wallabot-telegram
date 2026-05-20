@@ -36,20 +36,21 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Extrator via API Pública de Catálogo (Correção da Barra Aplicada) ---
+# --- Extrator via API Geral Otimizado (Correção da Rota e Paginação) ---
 def get_listings(keywords, max_price, category_id=None):
     product_list = []
     search_query = keywords.replace(" ", "%20")
     
-    # CORREÇÃO CRÍTICA: Adicionada a barra "/" obrigatória a seguir ao .com
-    api_url = f"https://wallapop.com/{search_query}&max_sale_price={max_price}&filters_source=quick_filters&order_by=newest"
+    # Rota oficial e atualizada da API da Wallapop com parâmetros obrigatórios
+    api_url = f"https://wallapop.com{search_query}&max_sale_price={max_price}&order_by=newest&is_first_page=true&filters_source=quick_filters"
     
     if category_id:
         api_url += f"&category_ids={category_id}"
         
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8"
     }
     
     try:
@@ -59,18 +60,19 @@ def get_listings(keywords, max_price, category_id=None):
             return product_list
 
         data = response.json()
-        # No catálogo do site, a lista de artigos vem dentro da chave 'data' ou 'items'
-        items = data.get('data', {}).get('items', [])
+        
+        # A rota 'general/search' organiza os produtos dentro de 'search_objects'
+        items = data.get('search_objects', [])
         if not items:
-            items = data.get('items', [])
+            items = data.get('data', {}).get('items', [])
             
         print(f"[API SUCESSO] {keywords}: Detetados {len(items)} artigos estruturados.")
 
         for item in items:
             try:
-                title = item.get('title', {}).get('text') or item.get('title') or 'Artigo Wallapop'
+                # Trata a estrutura de dados interna da API geral
+                title = item.get('title') or item.get('title', {}).get('text') or 'Artigo Wallapop'
                 
-                # Extração do preço adaptada ao JSON do site
                 price_data = item.get('price', {})
                 if isinstance(price_data, dict):
                     price_val = price_data.get('amount') or price_data.get('cash') or 0
@@ -78,7 +80,6 @@ def get_listings(keywords, max_price, category_id=None):
                     price_val = price_data or 0
                 price = f"{price_val}€"
                 
-                # Montagem do link limpo
                 web_slug = item.get('web_slug') or item.get('slug')
                 if web_slug:
                     url_prod = f"https://wallapop.com{web_slug}"
