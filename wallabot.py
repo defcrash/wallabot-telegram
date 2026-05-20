@@ -13,17 +13,14 @@ load_dotenv()
 HISTORY_FILE = "products_history.txt"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# --- Servidor Falso Otimizado (Correção de Congelamento) ---
+# --- Servidor Falso Otimizado para a Render ---
 def run_fake_server():
     PORT = int(os.getenv("PORT", 8080))
     Handler = http.server.SimpleHTTPRequestHandler
-    # Permite reutilizar a porta para evitar erros de bind pendentes
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        print(f"[SERVIDOR] Porta {PORT} aberta e ativa para a Render.")
         httpd.serve_forever()
 
-# Inicia o servidor web em paralelo para libertar o fluxo do Telegram
 threading.Thread(target=run_fake_server, daemon=True).start()
 
 # --- Funções de Histórico ---
@@ -39,36 +36,41 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Extrator via API Móvel Oficial ---
+# --- Extrator via API Pública de Catálogo (Desbloqueada) ---
 def get_listings(keywords, max_price, category_id=None):
     product_list = []
     search_query = keywords.replace(" ", "%20")
     
-    api_url = f"https://wallapop.com{search_query}&max_sale_price={max_price}&order_by=newest&filters_source=search_box"
+    # Rota pública de catálogo - Imune aos bloqueios que a Render sofria na rota móvel
+    api_url = f"https://wallapop.com{search_query}&max_sale_price={max_price}&filters_source=quick_filters&order_by=newest"
+    
     if category_id:
         api_url += f"&category_ids={category_id}"
         
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-        "Accept": "application/json",
-        "DeviceOS": "iOS"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json"
     }
     
     try:
-        print(f"[API] A consultar dados na Wallapop para: {keywords}")
         response = requests.get(api_url, headers=headers, timeout=15)
         if response.status_code != 200:
             print(f"[API] Erro {response.status_code} para: {keywords}")
             return product_list
 
         data = response.json()
-        items = data.get('search_objects', [])
-        print(f"[API SUCESSO] Encontrados {len(items)} artigos para: {keywords}")
+        # No catálogo do site, a lista de artigos vem dentro da chave 'data' ou 'items'
+        items = data.get('data', {}).get('items', [])
+        if not items:
+            items = data.get('items', [])
+            
+        print(f"[API SUCESSO] {keywords}: Detetados {len(items)} artigos estruturados.")
 
         for item in items:
             try:
-                title = item.get('title', 'Artigo Wallapop')
+                title = item.get('title', {}).get('text') or item.get('title') or 'Artigo Wallapop'
                 
+                # Extração do preço adaptada ao JSON do site
                 price_data = item.get('price', {})
                 if isinstance(price_data, dict):
                     price_val = price_data.get('amount') or price_data.get('cash') or 0
@@ -76,18 +78,23 @@ def get_listings(keywords, max_price, category_id=None):
                     price_val = price_data or 0
                 price = f"{price_val}€"
                 
-                web_slug = item.get('web_slug')
+                # Montagem do link limpo
+                web_slug = item.get('web_slug') or item.get('slug')
                 if web_slug:
                     url_prod = f"https://wallapop.com{web_slug}"
                 else:
-                    continue
+                    item_id = item.get('id')
+                    if item_id:
+                        url_prod = f"https://wallapop.com{item_id}"
+                    else:
+                        continue
 
                 product_info = {"title": str(title), "price": str(price), "url": str(url_prod)}
                 product_list.append(product_info)
             except Exception:
                 continue
     except Exception as e:
-        print(f"[API ERRO LIGAÇÃO] {e}")
+        print(f"[API ERRO] {e}")
         
     return product_list
 
@@ -97,7 +104,7 @@ async def send_new_product_message(context: CallbackContext, chat_id, product):
     await context.bot.send_message(chat_id, message, parse_mode="Markdown")
 
 async def send_started_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "✅ A pesquisa de consolas foi INICIADA! A monitorizar a cada 3 minutos.")
+    await context.bot.send_message(chat_id, "✅ A pesquisa de consolas foi INICIADA! A monitorizar a cada 3 minutos via API pública.")
 
 async def send_stopped_message(context: CallbackContext, chat_id):
     await context.bot.send_message(chat_id, "🛑 A pesquisa foi PARADA. Pode ir dormir descansado!")
@@ -125,13 +132,12 @@ async def check_new_products(context: CallbackContext):
     save_history(history)
     print(f"[BOT] Varrimento concluído. {novos_produtos} alertas enviados. A aguardar 3 minutos...")
 
-# --- Comandos Ativadores (Reintroduzidos) ---
+# --- Comandos Ativadores ---
 async def start(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
     print(f"[COMANDO] /start recebido do chat ID: {chat_id}")
     await send_started_message(context, chat_id)
     
-    # Remove qualquer busca anterior ativa para este chat para evitar duplicados
     current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
     for job in current_jobs:
         job.schedule_removal()
@@ -143,16 +149,14 @@ async def stop(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
     print(f"[COMANDO] /stop recebido do chat ID: {chat_id}")
     
-    # Desliga a busca especificamente para este chat
     current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
     for job in current_jobs:
         job.schedule_removal()
         
     await send_stopped_message(context, chat_id)
 
-# --- Inicialização Padrão Polling ---
+# --- Inicialização ---
 if __name__ == "__main__":
-    print("[SISTEMA] A iniciar escuta de comandos por Polling...")
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stop", stop))
