@@ -12,7 +12,6 @@ load_dotenv()
 
 HISTORY_FILE = "products_history.txt"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WALLAPOP_URL = os.getenv("WALLAPOP_URL")
 
 # --- Servidor Falso para a Render não ir abaixo ---
 def run_fake_server():
@@ -36,69 +35,40 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Conversor Inteligente e Blindado ---
-def convert_url_to_api(web_url):
-    try:
-        # Se já for um link da API ou contiver os parâmetros limpos
-        if "://wallapop.com" in web_url:
-            return web_url
-            
-        # Abordagem direta por extração de texto (limpa colchetes, plicas e espaços)
-        keywords = ""
-        max_price = ""
-        category_id = ""
-        
-        if "keywords=" in web_url:
-            keywords = web_url.split("keywords=")[1].split("&")[0]
-        if "max_sale_price=" in web_url:
-            max_price = web_url.split("max_sale_price=")[1].split("&")[0]
-        if "category_id=" in web_url:
-            category_id = web_url.split("category_id=")[1].split("&")[0]
-            
-        # Se for um link antigo da Wallapop com 'category_ids'
-        if "category_ids=" in web_url:
-            category_id = web_url.split("category_ids=")[1].split("&")[0]
-
-        # Monta a URL da API nativa com texto 100% limpo
-        api_url = f"https://://wallapop.com/api/v3/general/search?keywords={keywords}&filters_source=search_box"
-        if max_price:
-            api_url += f"&max_sale_price={max_price}"
-        if category_id:
-            api_url += f"&category_ids={category_id}"
-            
-        api_url += "&order_by=newest"
-        return api_url
-    except Exception as e:
-        print(f"[ERRO CONVERSOR] {e}")
-        return None
-
-# --- Extrator Ultra-Estável via API Interna ---
-def get_listings(web_url):
+# --- Extrator via API Móvel com Parâmetros Diretos ---
+def get_listings(keywords, max_price, category_id=None):
     product_list = []
-    api_url = convert_url_to_api(web_url)
     
-    if not api_url:
-        return product_list
+    # Substitui espaços por %20 para o link ficar correto
+    search_query = keywords.replace(" ", "%20")
+    
+    # Reconstrói a URL nativa que a App de telemóvel da Wallapop usa
+    api_url = f"https://wallapop.com{search_query}&max_sale_price={max_price}&order_by=newest&filters_source=search_box"
+    
+    if category_id:
+        api_url += f"&category_ids={category_id}"
         
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
         "Accept": "application/json",
         "DeviceOS": "iOS"
     }
     
     try:
+        print(f"[API] A consultar dados: {keywords} até {max_price}€")
         response = requests.get(api_url, headers=headers, timeout=15)
+        
         if response.status_code != 200:
-            print(f"[API ERRO] Código {response.status_code} para o link convertido.")
+            print(f"[API ERRO] Código do servidor: {response.status_code}")
             return product_list
 
         data = response.json()
         items = data.get('search_objects', [])
-        print(f"[SUCESSO API] Itens localizados no servidor: {len(items)}")
+        print(f"[SUCESSO] Detetados {len(items)} artigos na API para: {keywords}")
 
         for item in items:
             try:
-                title = item.get('title', 'Nintendo Switch')
+                title = item.get('title', 'Artigo Wallapop')
                 
                 # Extração do preço
                 price_data = item.get('price', {})
@@ -110,7 +80,7 @@ def get_listings(web_url):
                 
                 web_slug = item.get('web_slug')
                 if web_slug:
-                    url_prod = f"https://wallapop.com{web_slug}"
+                    url_prod = f"https://pt.wallapop.com/item/{web_slug}"
                 else:
                     continue
 
@@ -121,7 +91,7 @@ def get_listings(web_url):
                 continue
 
     except Exception as e:
-        print(f"[FALHA RECONEXÃO] Erro geral: {e}")
+        print(f"[FALHA] Erro na ligação: {e}")
         
     return product_list
 
@@ -131,7 +101,7 @@ async def send_new_product_message(context: CallbackContext, chat_id, product):
     await context.bot.send_message(chat_id, message, parse_mode="Markdown")
 
 async def send_started_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "✅ Sistema Ativo! Monitorização direta da API a cada 3 minutos.")
+    await context.bot.send_message(chat_id, "✅ Monitorização direta por API ativada a cada 3 minutos!")
 
 async def send_stopped_message(context: CallbackContext, chat_id):
     await context.bot.send_message(chat_id, "🛑 Pesquisa parada.")
@@ -142,21 +112,19 @@ async def check_new_products(context: CallbackContext):
     chat_id = job_data['chat_id']
     history = load_history()
     
-    urls = [url.strip() for url in WALLAPOP_URL.split(",")]
+    # Executa a busca 1: Nintendo Switch OLED
+    listings_oled = get_listings(keywords="nintendo switch oled", max_price="160")
+    # Executa a busca 2: Nintendo Switch Normal na categoria de Consolas (24200)
+    listings_normal = get_listings(keywords="nintendo switch", max_price="100", category_id="24200")
     
-    for url in urls:
-        if not url:
-            continue
-        try:
-            listings = get_listings(url)
-            for product in listings:
-                if product['url'] not in history:
-                    await send_new_product_message(context, chat_id, product)
-                    history.add(product['url'])
-            time.sleep(2)
-        except Exception as e:
-            print(f"[ERRO FILA] Falha no processamento: {e}")
-
+    # Junta as duas listas de resultados
+    all_listings = listings_oled + listings_normal
+    
+    for product in all_listings:
+        if product['url'] not in history:
+            await send_new_product_message(context, chat_id, product)
+            history.add(product['url'])
+            
     save_history(history)
 
 # --- Comandos Ativadores ---
