@@ -1,11 +1,10 @@
 import os
 import time
-import json
-import re
 import http.server
 import socketserver
 import threading
 import requests
+from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackContext
@@ -38,98 +37,76 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Extrator com Logs de Diagnóstico Avançados ---
-def get_listings(url):
+# --- Conversor de Link Web para Chamada de API Nativa ---
+def convert_url_to_api(web_url):
+    try:
+        parsed_url = urlparse(web_url)
+        params = parse_qs(parsed_url.query)
+        
+        # Extrai os filtros que configurou no site
+        keywords = params.get('keywords', [''])[0]
+        max_price = params.get('max_sale_price', [''])[0]
+        category_id = params.get('category_ids', [''])[0]
+        
+        # Monta o pedido direto para o servidor interno de dados da Wallapop
+        api_url = f"https://wallapop.com{keywords}&filters_source=search_box"
+        if max_price:
+            api_url += f"&max_sale_price={max_price}"
+        if category_id:
+            api_url += f"&category_ids={category_id}"
+            
+        # Força a ordenação pelos anúncios mais recentes
+        api_url += "&order_by=newest"
+        return api_url
+    except Exception:
+        return None
+
+# --- Extrator Ultra-Estável via API Interna ---
+def get_listings(web_url):
     product_list = []
+    api_url = convert_url_to_api(web_url)
+    
+    if not api_url:
+        print("[ERRO URL] Não foi possível converter o link.")
+        return product_list
+        
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+        "User-Agent": "Wallapop/3.166.0 (iPhone; iOS 16.0; Scale/3.00)",
+        "Accept": "application/json",
+        "DeviceOS": "iOS"
     }
     
     try:
-        print(f"[DIAGNÓSTICO] A tentar ler o URL: {url}")
-        response = requests.get(url, headers=headers, timeout=15)
-        
+        response = requests.get(api_url, headers=headers, timeout=15)
         if response.status_code != 200:
-            print(f"[ERRO REDE] Wallapop barrou o acesso com o status: {response.status_code}")
+            print(f"[API ERRO] Código de resposta: {response.status_code}")
             return product_list
 
-        # Procura o bloco JSON
-        match = re.search(r'<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>', response.text)
-        
-        if match:
-            json_text = match.group(1)
-            data = json.loads(json_text)
-            
-            # Tenta localizar a árvore de produtos em diferentes ramificações da Wallapop
-            items = []
-            paths_to_test = [
-                ['props', 'pageProps', 'initKeywordsData', 'items'],
-                ['props', 'pageProps', 'searchResult', 'items'],
-                ['props', 'pageProps', 'seoStructuredData', 'itemListElement']
-            ]
-            
-            for path in paths_to_test:
-                try:
-                    temp_data = data
-                    for key in path:
-                        temp_data = temp_data[key]
-                    if temp_data:
-                        items = temp_data
-                        print(f"[SUCESSO JSON] Produtos localizados no caminho: {' -> '.join(path)}")
-                        break
-                except KeyError:
+        data = response.json()
+        # Aceder diretamente à lista de objetos enviados pelo servidor
+        items = data.get('search_objects', [])
+        print(f"[SUCESSO API] Itens localizados no servidor Wallapop: {len(items)}")
+
+        for item in items:
+            try:
+                title = item.get('title', 'Nintendo Switch')
+                price_val = item.get('price', {}).get('amount') or item.get('price', 0)
+                price = f"{price_val}€"
+                
+                web_slug = item.get('web_slug')
+                if web_slug:
+                    url_prod = f"https://wallapop.com{web_slug}"
+                else:
                     continue
 
-            print(f"[DIAGNÓSTICO] Total de itens brutos detetados no JSON: {len(items)}")
-
-            for item in items:
-                try:
-                    # Se for o formato estruturado do SEO, o mapeamento muda ligeiramente
-                    if 'item' in item:
-                        item = item['item']
-
-                    title = item.get('title') or item.get('name') or 'Nintendo Switch'
-                    
-                    # Correção absoluta do Preço de forma aninhada
-                    price_val = None
-                    if 'price' in item:
-                        if isinstance(item['price'], dict):
-                            price_val = item['price'].get('amount') or item['price'].get('cash')
-                        else:
-                            price_val = item['price']
-                    
-                    if not price_val:
-                        price_val = item.get('amount') or item.get('salePrice')
-
-                    price = f"{price_val}€" if price_val else "Consultar Preço"
-
-                    # Garante que criamos uma String limpa e válida para o histórico
-                    web_slug = item.get('webSlug') or item.get('slug')
-                    if web_slug:
-                        url_prod = f"https://wallapop.com{web_slug}"
-                    else:
-                        # Fallback se o ID direto ou URL já vierem montados
-                        url_prod = item.get('url') or item.get('href')
-                    
-                    if not url_prod:
-                        continue
-
-                    # Converte explicitamente para String normal para o histórico não falhar
-                    url_prod = str(url_prod).split("?")[0]
-
-                    product_info = {"title": str(title), "price": str(price), "url": url_prod}
-                    product_list.append(product_info)
-                    
-                except Exception as item_err:
-                    print(f"[ERRO ITEM] Falha ao ler um produto individual: {item_err}")
-                    continue
-        else:
-            print("[CIBERSEGURANÇA] O bloco __NEXT_DATA__ não foi encontrado no HTML. A Wallapop barrou o servidor ou alterou a página.")
+                product_info = {"title": str(title), "price": str(price), "url": str(url_prod)}
+                product_list.append(product_info)
+                
+            except Exception:
+                continue
 
     except Exception as e:
-        print(f"[ERRO GERAL] Falha crítica na requisição: {e}")
+        print(f"[FALHA RECONEXÃO] Erro ao contactar a API: {e}")
         
     return product_list
 
@@ -139,7 +116,7 @@ async def send_new_product_message(context: CallbackContext, chat_id, product):
     await context.bot.send_message(chat_id, message, parse_mode="Markdown")
 
 async def send_started_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "✅ Monitorização com logs de diagnóstico iniciada a cada 3 minutos.")
+    await context.bot.send_message(chat_id, "✅ Sistema de Monitorização por API ativo a cada 3 minutos!")
 
 async def send_stopped_message(context: CallbackContext, chat_id):
     await context.bot.send_message(chat_id, "🛑 Pesquisa parada.")
@@ -157,15 +134,13 @@ async def check_new_products(context: CallbackContext):
             continue
         try:
             listings = get_listings(url)
-            print(f"[DIAGNÓSTICO] Produtos prontos para validação no histórico: {len(listings)}")
             for product in listings:
                 if product['url'] not in history:
-                    print(f"[TELEGRAM] A enviar novo anúncio: {product['title']}")
                     await send_new_product_message(context, chat_id, product)
                     history.add(product['url'])
             time.sleep(2)
         except Exception as e:
-            print(f"[ERRO FILA] Falha no processamento da lista: {e}")
+            print(f"[ERRO FILA] Falha no processamento: {e}")
 
     save_history(history)
 
