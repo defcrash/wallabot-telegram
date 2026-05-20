@@ -36,13 +36,13 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Extrator via API Pública de Catálogo (Desbloqueada) ---
+# --- Extrator via API Pública de Catálogo (Correção da Barra Aplicada) ---
 def get_listings(keywords, max_price, category_id=None):
     product_list = []
     search_query = keywords.replace(" ", "%20")
     
-    # Rota pública de catálogo - Imune aos bloqueios que a Render sofria na rota móvel
-    api_url = f"https://wallapop.com{search_query}&max_sale_price={max_price}&filters_source=quick_filters&order_by=newest"
+    # CORREÇÃO CRÍTICA: Adicionada a barra "/" obrigatória a seguir ao .com
+    api_url = f"https://wallapop.com/{search_query}&max_sale_price={max_price}&filters_source=quick_filters&order_by=newest"
     
     if category_id:
         api_url += f"&category_ids={category_id}"
