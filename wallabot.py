@@ -4,14 +4,18 @@ import http.server
 import socketserver
 import threading
 import requests
+import asyncio
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackContext
+from telegram.ext import Application
 
 load_dotenv()
 
 HISTORY_FILE = "products_history.txt"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+# --- CONFIGURAÇÃO CRÍTICA AUTOMÁTICA ---
+# Substitua o número abaixo pelo Chat ID longo do seu grupo do Telegram (obtido no JsonDumpBot, ex: -100xxxxxxxxxx)
+CHAT_ID = -6791211542 
 
 # --- Servidor Falso para a Render não ir abaixo ---
 def run_fake_server():
@@ -38,13 +42,9 @@ def save_history(history):
 # --- Extrator via API Móvel Oficial ---
 def get_listings(keywords, max_price, category_id=None):
     product_list = []
-    
-    # Substitui os espaços pelo formato correto de URL
     search_query = keywords.replace(" ", "%20")
     
-    # URL da API central perfeitamente limpa (sem barras extra)
     api_url = f"https://wallapop.com{search_query}&max_sale_price={max_price}&order_by=newest&filters_source=search_box"
-    
     if category_id:
         api_url += f"&category_ids={category_id}"
         
@@ -57,18 +57,17 @@ def get_listings(keywords, max_price, category_id=None):
     try:
         response = requests.get(api_url, headers=headers, timeout=15)
         if response.status_code != 200:
-            print(f"[API ERRO] Código {response.status_code} para: {keywords}")
+            print(f"[API] Erro {response.status_code} para: {keywords}")
             return product_list
 
         data = response.json()
         items = data.get('search_objects', [])
-        print(f"[SUCESSO] Ligação ativa! Detetados {len(items)} artigos na API para: {keywords}")
+        print(f"[API SUCESSO] Encontrados {len(items)} artigos para: {keywords}")
 
         for item in items:
             try:
                 title = item.get('title', 'Artigo Wallapop')
                 
-                # Extração segura do preço
                 price_data = item.get('price', {})
                 if isinstance(price_data, dict):
                     price_val = price_data.get('amount') or price_data.get('cash') or 0
@@ -84,63 +83,61 @@ def get_listings(keywords, max_price, category_id=None):
 
                 product_info = {"title": str(title), "price": str(price), "url": str(url_prod)}
                 product_list.append(product_info)
-                
             except Exception:
                 continue
-
     except Exception as e:
-        print(f"[ERRO GERAL LIGAÇÃO] {e}")
+        print(f"[API ERRO LIGAÇÃO] {e}")
         
     return product_list
 
-# --- Mensagens do Telegram ---
-async def send_new_product_message(context: CallbackContext, chat_id, product):
-    message = f"🚨 *NOVO ARTIGO DETETADO!* 🚨\n\n🎯 *Título:* {product['title']}\n💰 *Preço:* {product['price']}\n\n🔗 *Link Direto:* {product['url']}"
-    await context.bot.send_message(chat_id, message, parse_mode="Markdown")
-
-async def send_started_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "✅ Sistema Ativo! Monitorização direta por API iniciada a cada 3 minutos.")
-
-async def send_stopped_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "🛑 Pesquisa parada.")
-
-# --- Processador de Fila de Busca ---
-async def check_new_products(context: CallbackContext):
-    job_data = context.job.data
-    chat_id = job_data['chat_id']
-    history = load_history()
+# --- Loop de Busca Perpétuo Autónomo ---
+async def monitor_loop(application):
+    print("[BOT] Ciclo de monitorização automática INICIADO!")
     
-    # Procura 1: Nintendo Switch OLED até 150€
-    listings_oled = get_listings(keywords="nintendo switch oled", max_price="150")
-    # Procura 2: Nintendo Switch até 100€ na categoria 24200 (Consolas)
-    listings_normal = get_listings(keywords="nintendo switch", max_price="100", category_id="24200")
-    
-    all_listings = listings_oled + listings_normal
-    
-    for product in all_listings:
-        if product['url'] not in history:
-            await send_new_product_message(context, chat_id, product)
-            history.add(product['url'])
+    # Envia uma mensagem inicial para o grupo a avisar que ligou
+    try:
+        await application.bot.send_message(CHAT_ID, "🚀 *Monitor de Consolas Ativo!* A procurar pechinchas na Wallapop de 3 em 3 minutos...", parse_mode="Markdown")
+    except Exception as t_err:
+        print(f"[ERRO TELEGRAM] Não conseguiu enviar mensagem inicial. Verifique o CHAT_ID ou se o bot está no grupo: {t_err}")
+
+    while True:
+        try:
+            print("[BOT] A iniciar varrimento das URLs...")
+            history = load_history()
             
-    save_history(history)
+            # Procura 1: Nintendo Switch OLED até 150€
+            listings_oled = get_listings(keywords="nintendo switch oled", max_price="150")
+            # Procura 2: Nintendo Switch até 100€ na categoria 24200 (Consolas)
+            listings_normal = get_listings(keywords="nintendo switch", max_price="100", category_id="24200")
+            
+            all_listings = listings_oled + listings_normal
+            
+            novos_produtos = 0
+            for product in all_listings:
+                if product['url'] not in history:
+                    message = f"🚨 *NOVO ARTIGO DETETADO!* 🚨\n\n🎯 *Título:* {product['title']}\n💰 *Preço:* {product['price']}\n\n🔗 *Link Direto:* {product['url']}"
+                    await application.bot.send_message(CHAT_ID, message, parse_mode="Markdown")
+                    history.add(product['url'])
+                    novos_produtos += 1
+                    time.sleep(1) # Pequena pausa entre mensagens
+            
+            save_history(history)
+            print(f"[BOT] Varrimento concluído. {novos_produtos} novos alertas enviados. A aguardar 3 minutos...")
+            
+        except Exception as loop_err:
+            print(f"[ERRO LOOP] Falha no ciclo: {loop_err}")
+            
+        await asyncio.sleep(180) # Aguarda 3 minutos de forma assíncrona pura
 
-# --- Comandos Ativadores ---
-async def start(update: Update, context: CallbackContext):
-    chat_id = update.message.chat_id
-    await send_started_message(context, chat_id)
-    context.job_queue.run_repeating(
-        check_new_products, interval=180, first=0, data={'chat_id': chat_id})
+# --- Inicialização Direta sem Polling de comandos ---
+async def main():
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    await application.initialize()
+    await application.start()
+    
+    # Arranca o nosso loop eterno
+    await monitor_loop(application)
 
-async def stop(update: Update, context: CallbackContext):
-    chat_id = update.message.chat_id
-    current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
-    for job in current_jobs:
-        job.schedule_removal()
-    await context.job_queue.stop()
-    await send_stopped_message(context, chat_id)
-
-# --- Inicialização do Bot ---
-application = Application.builder().token(TELEGRAM_TOKEN).build()
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("stop", stop))
-application.run_polling()
+if __name__ == "__main__":
+    print("[SISTEMA] A arrancar o bot em modo automático...")
+    asyncio.run(main())
