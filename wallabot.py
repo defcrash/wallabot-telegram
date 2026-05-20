@@ -35,14 +35,14 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Extrator via API Móvel com Parâmetros Diretos ---
+# --- Extrator via API Móvel Oficial ---
 def get_listings(keywords, max_price, category_id=None):
     product_list = []
     
-    # Substitui espaços por %20 para o link ficar correto
+    # Substitui os espaços pelo formato correto de URL
     search_query = keywords.replace(" ", "%20")
     
-    # Reconstrói a URL nativa que a App de telemóvel da Wallapop usa
+    # URL da API central perfeitamente limpa (sem barras extra)
     api_url = f"https://wallapop.com{search_query}&max_sale_price={max_price}&order_by=newest&filters_source=search_box"
     
     if category_id:
@@ -55,22 +55,20 @@ def get_listings(keywords, max_price, category_id=None):
     }
     
     try:
-        print(f"[API] A consultar dados: {keywords} até {max_price}€")
         response = requests.get(api_url, headers=headers, timeout=15)
-        
         if response.status_code != 200:
-            print(f"[API ERRO] Código do servidor: {response.status_code}")
+            print(f"[API ERRO] Código {response.status_code} para: {keywords}")
             return product_list
 
         data = response.json()
         items = data.get('search_objects', [])
-        print(f"[SUCESSO] Detetados {len(items)} artigos na API para: {keywords}")
+        print(f"[SUCESSO] Ligação ativa! Detetados {len(items)} artigos na API para: {keywords}")
 
         for item in items:
             try:
                 title = item.get('title', 'Artigo Wallapop')
                 
-                # Extração do preço
+                # Extração segura do preço
                 price_data = item.get('price', {})
                 if isinstance(price_data, dict):
                     price_val = price_data.get('amount') or price_data.get('cash') or 0
@@ -80,7 +78,7 @@ def get_listings(keywords, max_price, category_id=None):
                 
                 web_slug = item.get('web_slug')
                 if web_slug:
-                    url_prod = f"https://pt.wallapop.com/item/{web_slug}"
+                    url_prod = f"https://wallapop.com{web_slug}"
                 else:
                     continue
 
@@ -91,7 +89,7 @@ def get_listings(keywords, max_price, category_id=None):
                 continue
 
     except Exception as e:
-        print(f"[FALHA] Erro na ligação: {e}")
+        print(f"[ERRO GERAL LIGAÇÃO] {e}")
         
     return product_list
 
@@ -101,7 +99,7 @@ async def send_new_product_message(context: CallbackContext, chat_id, product):
     await context.bot.send_message(chat_id, message, parse_mode="Markdown")
 
 async def send_started_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "✅ Monitorização direta por API ativada a cada 3 minutos!")
+    await context.bot.send_message(chat_id, "✅ Sistema Ativo! Monitorização direta por API iniciada a cada 3 minutos.")
 
 async def send_stopped_message(context: CallbackContext, chat_id):
     await context.bot.send_message(chat_id, "🛑 Pesquisa parada.")
@@ -112,12 +110,11 @@ async def check_new_products(context: CallbackContext):
     chat_id = job_data['chat_id']
     history = load_history()
     
-    # Executa a busca 1: Nintendo Switch OLED
-    listings_oled = get_listings(keywords="nintendo switch oled", max_price="160")
-    # Executa a busca 2: Nintendo Switch Normal na categoria de Consolas (24200)
+    # Procura 1: Nintendo Switch OLED até 150€
+    listings_oled = get_listings(keywords="nintendo switch oled", max_price="150")
+    # Procura 2: Nintendo Switch até 100€ na categoria 24200 (Consolas)
     listings_normal = get_listings(keywords="nintendo switch", max_price="100", category_id="24200")
     
-    # Junta as duas listas de resultados
     all_listings = listings_oled + listings_normal
     
     for product in all_listings:
