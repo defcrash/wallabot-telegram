@@ -4,25 +4,26 @@ import http.server
 import socketserver
 import threading
 import requests
-import asyncio
 from dotenv import load_dotenv
-from telegram.ext import Application
+from telegram import Update
+from telegram.ext import Application, CommandHandler, CallbackContext
 
 load_dotenv()
 
 HISTORY_FILE = "products_history.txt"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# --- INTRODUZA AQUI O SEU CHAT ID CORRETO COM O PREFIXO -100 ---
-CHAT_ID = -1006791211542  
-
-# --- Servidor Falso para a Render não ir abaixo ---
+# --- Servidor Falso Otimizado (Correção de Congelamento) ---
 def run_fake_server():
     PORT = int(os.getenv("PORT", 8080))
     Handler = http.server.SimpleHTTPRequestHandler
+    # Permite reutilizar a porta para evitar erros de bind pendentes
+    socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", PORT), Handler) as httpd:
+        print(f"[SERVIDOR] Porta {PORT} aberta e ativa para a Render.")
         httpd.serve_forever()
 
+# Inicia o servidor web em paralelo para libertar o fluxo do Telegram
 threading.Thread(target=run_fake_server, daemon=True).start()
 
 # --- Funções de Histórico ---
@@ -38,12 +39,11 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Extrator API Puro ---
+# --- Extrator via API Móvel Oficial ---
 def get_listings(keywords, max_price, category_id=None):
     product_list = []
     search_query = keywords.replace(" ", "%20")
     
-    # URL construída de forma estrita e imune a colagens de texto
     api_url = f"https://wallapop.com{search_query}&max_sale_price={max_price}&order_by=newest&filters_source=search_box"
     if category_id:
         api_url += f"&category_ids={category_id}"
@@ -55,6 +55,7 @@ def get_listings(keywords, max_price, category_id=None):
     }
     
     try:
+        print(f"[API] A consultar dados na Wallapop para: {keywords}")
         response = requests.get(api_url, headers=headers, timeout=15)
         if response.status_code != 200:
             print(f"[API] Erro {response.status_code} para: {keywords}")
@@ -90,48 +91,69 @@ def get_listings(keywords, max_price, category_id=None):
         
     return product_list
 
-# --- Loop de Busca Perpétuo ---
-async def monitor_loop(application):
-    print("[BOT] Ciclo de monitorização automática INICIADO!")
+# --- Mensagens do Telegram ---
+async def send_new_product_message(context: CallbackContext, chat_id, product):
+    message = f"🚨 *NOVO ARTIGO DETETADO!* 🚨\n\n🎯 *Título:* {product['title']}\n💰 *Preço:* {product['price']}\n\n🔗 *Link Direto:* {product['url']}"
+    await context.bot.send_message(chat_id, message, parse_mode="Markdown")
+
+async def send_started_message(context: CallbackContext, chat_id):
+    await context.bot.send_message(chat_id, "✅ A pesquisa de consolas foi INICIADA! A monitorizar a cada 3 minutos.")
+
+async def send_stopped_message(context: CallbackContext, chat_id):
+    await context.bot.send_message(chat_id, "🛑 A pesquisa foi PARADA. Pode ir dormir descansado!")
+
+# --- Processador de Fila de Busca ---
+async def check_new_products(context: CallbackContext):
+    job_data = context.job.data
+    chat_id = job_data['chat_id']
+    print(f"[BOT] A iniciar varrimento para o chat: {chat_id}")
+    history = load_history()
     
-    try:
-        await application.bot.send_message(CHAT_ID, "🚀 *Monitor de Consolas Ativo!* A procurar pechinchas na Wallapop de 3 em 3 minutos...", parse_mode="Markdown")
-    except Exception as t_err:
-        print(f"[ERRO TELEGRAM] Verifique o CHAT_ID ou se o bot está no grupo: {t_err}")
+    listings_oled = get_listings(keywords="nintendo switch oled", max_price="150")
+    listings_normal = get_listings(keywords="nintendo switch", max_price="100", category_id="24200")
+    
+    all_listings = listings_oled + listings_normal
+    
+    novos_produtos = 0
+    for product in all_listings:
+        if product['url'] not in history:
+            await send_new_product_message(context, chat_id, product)
+            history.add(product['url'])
+            novos_produtos += 1
+            time.sleep(1)
+            
+    save_history(history)
+    print(f"[BOT] Varrimento concluído. {novos_produtos} alertas enviados. A aguardar 3 minutos...")
 
-    while True:
-        try:
-            print("[BOT] A iniciar varrimento das URLs...")
-            history = load_history()
-            
-            listings_oled = get_listings(keywords="nintendo switch oled", max_price="150")
-            listings_normal = get_listings(keywords="nintendo switch", max_price="100", category_id="24200")
-            
-            all_listings = listings_oled + listings_normal
-            
-            novos_produtos = 0
-            for product in all_listings:
-                if product['url'] not in history:
-                    message = f"🚨 *NOVO ARTIGO DETETADO!* 🚨\n\n🎯 *Título:* {product['title']}\n💰 *Preço:* {product['price']}\n\n🔗 *Link Direto:* {product['url']}"
-                    await application.bot.send_message(CHAT_ID, message, parse_mode="Markdown")
-                    history.add(product['url'])
-                    novos_produtos += 1
-                    time.sleep(1)
-            
-            save_history(history)
-            print(f"[BOT] Varrimento concluído. {novos_produtos} novos alertas enviados. A aguardar 3 minutos...")
-            
-        except Exception as loop_err:
-            print(f"[ERRO LOOP] Falha no ciclo: {loop_err}")
-            
-        await asyncio.sleep(180)
+# --- Comandos Ativadores (Reintroduzidos) ---
+async def start(update: Update, context: CallbackContext):
+    chat_id = update.message.chat_id
+    print(f"[COMANDO] /start recebido do chat ID: {chat_id}")
+    await send_started_message(context, chat_id)
+    
+    # Remove qualquer busca anterior ativa para este chat para evitar duplicados
+    current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
+    for job in current_jobs:
+        job.schedule_removal()
+        
+    context.job_queue.run_repeating(
+        check_new_products, interval=180, first=0, name=str(chat_id), data={'chat_id': chat_id})
 
-async def main():
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    await application.initialize()
-    await application.start()
-    await monitor_loop(application)
+async def stop(update: Update, context: CallbackContext):
+    chat_id = update.message.chat_id
+    print(f"[COMANDO] /stop recebido do chat ID: {chat_id}")
+    
+    # Desliga a busca especificamente para este chat
+    current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
+    for job in current_jobs:
+        job.schedule_removal()
+        
+    await send_stopped_message(context, chat_id)
 
+# --- Inicialização Padrão Polling ---
 if __name__ == "__main__":
-    print("[SISTEMA] A arrancar o bot em modo automático...")
-    asyncio.run(main())
+    print("[SISTEMA] A iniciar escuta de comandos por Polling...")
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("stop", stop))
+    application.run_polling()
