@@ -40,7 +40,7 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Extrator Científico via JSON Oculto (Infalível) ---
+# --- Extrator Científico via JSON Oculto (Correção de Preço Ativada) ---
 def get_listings(url):
     options = Options()
     options.add_argument("--headless")
@@ -57,33 +57,46 @@ def get_listings(url):
     
     try:
         driver.get(url)
-        time.sleep(6)  # Tempo suficiente para injetar o script oculto
+        time.sleep(6)
         
-        # O TRUQUE MAGNÍFICO: Extrai o JSON de dados puro que a Wallapop usa internamente
         json_element = driver.find_element(By.ID, "__NEXT_DATA__")
         json_text = json_element.get_attribute("innerHTML")
         data = json.loads(json_text)
         
-        # Navega de forma segura pela árvore de dados do Next.js da Wallapop
         try:
             items = data['props']['pageProps']['initKeywordsData']['items']
         except KeyError:
             try:
-                # Caminho alternativo caso seja uma pesquisa direta de catálogo estruturado
                 items = data['props']['pageProps']['searchResult']['items']
             except KeyError:
                 items = []
 
         for item in items:
             try:
-                # Extração direta dos campos nativos do servidor da Wallapop (Impossível vir em branco)
                 title = item.get('title', 'Nintendo Switch (Ver Link)')
                 
-                # Trata o preço adicionando o símbolo do euro de forma limpa
-                price_val = item.get('price', {}).get('amount') or item.get('price') or "Consultar"
-                price = f"{price_val}€" if isinstance(price_val, (int, float)) else f"{price_val}"
+                # --- EXTRAÇÃO DE PREÇO ADAPTIVA ---
+                price_data = item.get('price')
+                price_val = None
+
+                if isinstance(price_data, dict):
+                    # Tenta ler as chaves comuns em objetos de preço modernos da Wallapop
+                    price_val = price_data.get('amount') or price_data.get('cash') or price_data.get('total')
+                elif isinstance(price_data, (int, float)):
+                    # Se vier diretamente como número bruto
+                    price_val = price_data
                 
-                # Garante que o link do produto fica no formato correto
+                # Se ainda assim não encontrar no objeto 'price', procura no topo do item
+                if not price_val:
+                    price_val = item.get('amount') or item.get('salePrice')
+
+                # Formata a string final para o Telegram
+                if price_val is not None:
+                    price = f"{price_val}€"
+                else:
+                    price = "Consultar no Link"
+                # ----------------------------------
+
                 web_slug = item.get('webSlug')
                 if web_slug:
                     url_prod = f"https://wallapop.com{web_slug}"
