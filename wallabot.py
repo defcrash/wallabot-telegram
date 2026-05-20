@@ -1,23 +1,27 @@
 import os
 import time
+import json
 import http.server
 import socketserver
 import threading
-import requests
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackContext
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 
 load_dotenv()
 
 HISTORY_FILE = "products_history.txt"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+WALLAPOP_URL = os.getenv("WALLAPOP_URL")
 
-# --- Servidor Falso Otimizado para a Render ---
+# --- Servidor Falso para a Render não ir abaixo ---
 def run_fake_server():
     PORT = int(os.getenv("PORT", 8080))
     Handler = http.server.SimpleHTTPRequestHandler
-    socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", PORT), Handler) as httpd:
         httpd.serve_forever()
 
@@ -36,66 +40,66 @@ def save_history(history):
         for product in history:
             file.write(f"{product}\n")
 
-# --- Extrator via API Geral Otimizado (Correção da Rota e Paginação) ---
-def get_listings(keywords, max_price, category_id=None):
+# --- Extrator Científico via JSON Oculto (Infalível) ---
+def get_listings(url):
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+    service = Service(executable_path="/usr/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=options)
+    
+    driver.set_page_load_timeout(30)
     product_list = []
-    search_query = keywords.replace(" ", "%20")
-    
-    # Rota oficial e atualizada da API da Wallapop com parâmetros obrigatórios
-    api_url = f"https://wallapop.com{search_query}&max_sale_price={max_price}&order_by=newest&is_first_page=true&filters_source=quick_filters"
-    
-    if category_id:
-        api_url += f"&category_ids={category_id}"
-        
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8"
-    }
     
     try:
-        response = requests.get(api_url, headers=headers, timeout=15)
-        if response.status_code != 200:
-            print(f"[API] Erro {response.status_code} para: {keywords}")
-            return product_list
-
-        data = response.json()
+        driver.get(url)
+        time.sleep(6)  # Tempo suficiente para injetar o script oculto
         
-        # A rota 'general/search' organiza os produtos dentro de 'search_objects'
-        items = data.get('search_objects', [])
-        if not items:
-            items = data.get('data', {}).get('items', [])
-            
-        print(f"[API SUCESSO] {keywords}: Detetados {len(items)} artigos estruturados.")
+        # O TRUQUE MAGNÍFICO: Extrai o JSON de dados puro que a Wallapop usa internamente
+        json_element = driver.find_element(By.ID, "__NEXT_DATA__")
+        json_text = json_element.get_attribute("innerHTML")
+        data = json.loads(json_text)
+        
+        # Navega de forma segura pela árvore de dados do Next.js da Wallapop
+        try:
+            items = data['props']['pageProps']['initKeywordsData']['items']
+        except KeyError:
+            try:
+                # Caminho alternativo caso seja uma pesquisa direta de catálogo estruturado
+                items = data['props']['pageProps']['searchResult']['items']
+            except KeyError:
+                items = []
 
         for item in items:
             try:
-                # Trata a estrutura de dados interna da API geral
-                title = item.get('title') or item.get('title', {}).get('text') or 'Artigo Wallapop'
+                # Extração direta dos campos nativos do servidor da Wallapop (Impossível vir em branco)
+                title = item.get('title', 'Nintendo Switch (Ver Link)')
                 
-                price_data = item.get('price', {})
-                if isinstance(price_data, dict):
-                    price_val = price_data.get('amount') or price_data.get('cash') or 0
-                else:
-                    price_val = price_data or 0
-                price = f"{price_val}€"
+                # Trata o preço adicionando o símbolo do euro de forma limpa
+                price_val = item.get('price', {}).get('amount') or item.get('price') or "Consultar"
+                price = f"{price_val}€" if isinstance(price_val, (int, float)) else f"{price_val}"
                 
-                web_slug = item.get('web_slug') or item.get('slug')
+                # Garante que o link do produto fica no formato correto
+                web_slug = item.get('webSlug')
                 if web_slug:
                     url_prod = f"https://wallapop.com{web_slug}"
                 else:
-                    item_id = item.get('id')
-                    if item_id:
-                        url_prod = f"https://wallapop.com{item_id}"
-                    else:
-                        continue
+                    continue
 
-                product_info = {"title": str(title), "price": str(price), "url": str(url_prod)}
+                product_info = {"title": title, "price": price, "url": url_prod}
                 product_list.append(product_info)
+                
             except Exception:
                 continue
+
     except Exception as e:
-        print(f"[API ERRO] {e}")
+        print(f"Erro ao processar estrutura JSON: {e}")
+    finally:
+        driver.quit()
         
     return product_list
 
@@ -105,60 +109,51 @@ async def send_new_product_message(context: CallbackContext, chat_id, product):
     await context.bot.send_message(chat_id, message, parse_mode="Markdown")
 
 async def send_started_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "✅ A pesquisa de consolas foi INICIADA! A monitorizar a cada 3 minutos via API pública.")
+    await context.bot.send_message(chat_id, "✅ A pesquisa na Wallapop foi REINICIADA! Monitorização de dados brutos ativa a cada 3 minutos.")
 
 async def send_stopped_message(context: CallbackContext, chat_id):
-    await context.bot.send_message(chat_id, "🛑 A pesquisa foi PARADA. Pode ir dormir descansado!")
+    await context.bot.send_message(chat_id, "🛑 A pesquisa foi PARADA. Use /start para retomar.")
 
 # --- Processador de Fila de Busca ---
 async def check_new_products(context: CallbackContext):
     job_data = context.job.data
     chat_id = job_data['chat_id']
-    print(f"[BOT] A iniciar varrimento para o chat: {chat_id}")
     history = load_history()
     
-    listings_oled = get_listings(keywords="nintendo switch oled", max_price="150")
-    listings_normal = get_listings(keywords="nintendo switch", max_price="100", category_id="24200")
+    urls = [url.strip() for url in WALLAPOP_URL.split(",")]
     
-    all_listings = listings_oled + listings_normal
-    
-    novos_produtos = 0
-    for product in all_listings:
-        if product['url'] not in history:
-            await send_new_product_message(context, chat_id, product)
-            history.add(product['url'])
-            novos_produtos += 1
-            time.sleep(1)
-            
+    for url in urls:
+        if not url:
+            continue
+        try:
+            listings = get_listings(url)
+            for product in listings:
+                if product['url'] not in history:
+                    await send_new_product_message(context, chat_id, product)
+                    history.add(product['url'])
+            time.sleep(3)
+        except Exception as e:
+            print(f"Erro na fila de processamento: {e}")
+
     save_history(history)
-    print(f"[BOT] Varrimento concluído. {novos_produtos} alertas enviados. A aguardar 3 minutos...")
 
 # --- Comandos Ativadores ---
 async def start(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
-    print(f"[COMANDO] /start recebido do chat ID: {chat_id}")
     await send_started_message(context, chat_id)
-    
-    current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
-    for job in current_jobs:
-        job.schedule_removal()
-        
     context.job_queue.run_repeating(
-        check_new_products, interval=180, first=0, name=str(chat_id), data={'chat_id': chat_id})
+        check_new_products, interval=180, first=0, data={'chat_id': chat_id})
 
 async def stop(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
-    print(f"[COMANDO] /stop recebido do chat ID: {chat_id}")
-    
     current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
     for job in current_jobs:
         job.schedule_removal()
-        
+    await context.job_queue.stop()
     await send_stopped_message(context, chat_id)
 
-# --- Inicialização ---
-if __name__ == "__main__":
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("stop", stop))
-    application.run_polling()
+# --- Inicialização do Bot ---
+application = Application.builder().token(TELEGRAM_TOKEN).build()
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("stop", stop))
+application.run_polling()
